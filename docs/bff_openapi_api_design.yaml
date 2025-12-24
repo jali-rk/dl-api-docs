@@ -227,6 +227,66 @@ components:
         - email
         - code
 
+    ResendVerificationCodeRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required:
+        - email
+
+    ResendVerificationCodeResponse:
+      type: object
+      properties:
+        codeSent:
+          type: boolean
+        message:
+          type: string
+      required:
+        - codeSent
+        - message
+
+    ForgotPasswordRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required:
+        - email
+
+    ForgotPasswordResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        emailSent:
+          type: boolean
+      required:
+        - message
+        - emailSent
+
+    ResetPasswordRequest:
+      type: object
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+          format: password
+      required:
+        - token
+        - newPassword
+
+    ResetPasswordResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
     LoginRequest:
       type: object
       properties:
@@ -628,6 +688,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
 
+  /auth/resend-verification-code:
+    post:
+      tags: [Auth]
+      summary: Resend verification code
+      description: |
+        Resends the 6-digit verification code if expired or not received.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationCodeRequest'
+      responses:
+        '200':
+          description: Verification code resent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResendVerificationCodeResponse'
+        '400':
+          description: Invalid request or user already verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
   /auth/login:
     post:
       tags: [Auth]
@@ -671,6 +757,59 @@ paths:
                 $ref: '#/components/schemas/LoginResponse'
         '401':
           description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      description: |
+        Sends a password reset link to the user's email if it exists.
+        For security, always returns success even if email doesn't exist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Password reset email sent (or email doesn't exist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForgotPasswordResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with token
+      description: |
+        Resets the user's password using the token from the reset email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordResponse'
+        '400':
+          description: Invalid or expired token
           content:
             application/json:
               schema:
@@ -1279,6 +1418,33 @@ paths:
                   total:
                     type: integer
 
+  /issues/ws-info:
+    get:
+      tags: [Issues]
+      summary: Get WebSocket connection information
+      description: |
+        Returns WebSocket connection details for real-time issue chat.
+        Includes WebSocket URL and authentication token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: WebSocket connection info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wsUrl:
+                    type: string
+                    description: "WebSocket server URL"
+                  token:
+                    type: string
+                    description: "Authentication token for WebSocket connection"
+                required:
+                  - wsUrl
+                  - token
+
   /issues/{issueId}:
     get:
       tags: [Issues]
@@ -1521,6 +1687,33 @@ paths:
                   total:
                     type: integer
 
+  /notifications/{notificationId}:
+    get:
+      tags: [Notifications]
+      summary: Get a single notification
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
   /notifications/{notificationId}/read:
     patch:
       tags: [Notifications]
@@ -1541,6 +1734,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Notification'
+
+  #################################
+  # ADMIN - NOTIFICATIONS
+  #################################
+  /admin/notifications/broadcast:
+    post:
+      tags: [AdminUsers]
+      summary: Send broadcast notification
+      description: |
+        Send a notification to all users or specific roles.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                body:
+                  type: string
+                targetRoles:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Role'
+                  description: "If empty or null, sends to all users"
+              required:
+                - title
+                - body
+      responses:
+        '200':
+          description: Notification broadcast initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  recipientCount:
+                    type: integer
+        '403':
+          description: Forbidden (admin only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
 
   #################################
   # GENERIC FILE UPLOAD (FOR ISSUES, ETC.)
@@ -1572,3 +1814,136 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadedFile'
+
+  /files/upload-multiple:
+    post:
+      tags: [Students]
+      summary: Upload multiple files
+      description: |
+        Upload multiple files at once to File Storage Service.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '201':
+          description: Files uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UploadedFile'
+
+  /files/{fileId}/url:
+    get:
+      tags: [Students]
+      summary: Get signed URL for file download
+      description: |
+        Returns a pre-signed URL for downloading or viewing the file.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Signed file URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  expiresIn:
+                    type: integer
+                    description: "URL expiration time in seconds"
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /files/{fileId}:
+    get:
+      tags: [Students]
+      summary: Get file metadata
+      description: |
+        Returns metadata about the file without downloading it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: File metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadedFile'
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+    delete:
+      tags: [Students]
+      summary: Delete a file
+      description: |
+        Deletes a file from the File Storage Service.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: File deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: Not authorized to delete this file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
