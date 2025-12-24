@@ -4,76 +4,91 @@
   <meta charset="UTF-8" />
   <title>Dopamine Lite – API Documentation</title>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/swagger-ui-dist/swagger-ui.css"
-  />
-
   <style>
     body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
       margin: 0;
+      padding: 40px;
     }
-    #topbar {
-      padding: 10px 20px;
-      background: #1f2937;
-      color: white;
-      font-family: sans-serif;
-      display: flex;
-      align-items: center;
-      gap: 12px;
+
+    h1 {
+      margin-bottom: 10px;
     }
-    select {
-      padding: 6px;
-      font-size: 14px;
+
+    p {
+      color: #9ca3af;
+      margin-bottom: 30px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: #1e293b;
+      padding: 20px;
+      border-radius: 8px;
+      text-decoration: none;
+      color: inherit;
+      border: 1px solid #334155;
+      transition: transform 0.15s ease, border 0.15s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #38bdf8;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+    }
+
+    .card span {
+      font-size: 13px;
+      color: #94a3b8;
     }
   </style>
 </head>
 <body>
 
-  <!-- Top bar -->
-  <div id="topbar">
-    <strong>Dopamine Lite API Docs</strong>
+  <h1>Dopamine Lite – API Documentation</h1>
+  <p>Select a service to view its API documentation.</p>
 
-    <label for="apiSelect">Service:</label>
-    <select id="apiSelect">
-      <option value="bff_openapi_api_design.yaml">BFF API</option>
-      <option value="User Service API.yaml">User Service</option>
-      <option value="File Upload Service API.yaml">File Upload Service</option>
-      <option value="Issues and Chat Service API.yaml">Issues & Chat Service</option>
-      <option value="Notification Service API.yaml">Notification Service</option>
-      <option value="Payment Submission Portal Service API.yaml">Payment Submission Portal</option>
-    </select>
+  <div class="grid">
+    <a class="card" href="bff.html">
+      <h3>BFF API</h3>
+      <span>Backend-for-Frontend</span>
+    </a>
+
+    <a class="card" href="user-service.html">
+      <h3>User Service</h3>
+      <span>User management & auth</span>
+    </a>
+
+    <a class="card" href="file-upload.html">
+      <h3>File Upload Service</h3>
+      <span>Uploads & storage</span>
+    </a>
+
+    <a class="card" href="issues-chat.html">
+      <h3>Issues & Chat Service</h3>
+      <span>Messaging & support</span>
+    </a>
+
+    <a class="card" href="notification.html">
+      <h3>Notification Service</h3>
+      <span>Email & push notifications</span>
+    </a>
+
+    <a class="card" href="payment-portal.html">
+      <h3>Payment Submission Portal</h3>
+      <span>Payments & submissions</span>
+    </a>
   </div>
-
-  <!-- Swagger UI -->
-  <div id="swagger-ui"></div>
-
-  <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
-  <script>
-    let ui;
-
-    function loadSwagger(spec) {
-      ui = SwaggerUIBundle({
-        url: spec,
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        presets: [
-          SwaggerUIBundle.presets.apis,
-          SwaggerUIBundle.SwaggerUIStandalonePreset
-        ],
-        layout: "BaseLayout"
-      });
-    }
-
-    // Initial load
-    loadSwagger(document.getElementById("apiSelect").value);
-
-    // Switch API
-    document.getElementById("apiSelect").addEventListener("change", function () {
-      document.getElementById("swagger-ui").innerHTML = "";
-      loadSwagger(this.value);
-    });
-  </script>
 
 </body>
 </html>
