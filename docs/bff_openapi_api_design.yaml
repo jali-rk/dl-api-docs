@@ -25,6 +25,8 @@ servers:
 tags:
   - name: Auth
     description: Authentication and onboarding
+  - name: Users
+    description: User public data access
   - name: Students
     description: Student profile and self-service
   - name: Portals
@@ -136,6 +138,25 @@ components:
         - address
         - role
         - isVerified
+
+    UserPublicData:
+      type: object
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        whatsappNumber:
+          type: string
+        codeNumber:
+          type: string
+          description: "6-digit unique code assigned to student"
+      required:
+        - fullName
+        - email
+        - whatsappNumber
+        - codeNumber
 
     StudentProfile:
       allOf:
@@ -670,6 +691,46 @@ paths:
                 $ref: '#/components/schemas/UserSummary'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # USER PUBLIC DATA
+  #################################
+  /users/{userId}/public:
+    get:
+      tags: [Users]
+      summary: Get user's public data
+      description: |
+        Retrieve public information about a user by their userId.
+        Returns name, email, WhatsApp number, and code number.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The UUID of the user
+      responses:
+        '200':
+          description: User public data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublicData'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: User not found
           content:
             application/json:
               schema:
