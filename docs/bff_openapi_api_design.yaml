@@ -511,6 +511,11 @@ components:
       type: string
       enum: [IN_APP, EMAIL, WHATSAPP]
 
+    NotificationChannel:
+      type: string
+      enum: [IN_APP, EMAIL, WHATSAPP]
+      description: "Notification delivery channel"
+
     Notification:
       type: object
       properties:
@@ -1743,7 +1748,7 @@ paths:
       tags: [AdminUsers]
       summary: Send broadcast notification
       description: |
-        Send a notification to all users or specific roles.
+        Send a notification to specific users via selected channels.
       security:
         - bearerAuth: []
       requestBody:
@@ -1753,21 +1758,33 @@ paths:
             schema:
               type: object
               properties:
+                targetUserIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: "Array of user IDs to send notification to"
+                channels:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/NotificationChannel'
+                  description: "Notification channels (IN_APP, EMAIL, WHATSAPP)"
                 title:
                   type: string
                 body:
                   type: string
-                targetRoles:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/Role'
-                  description: "If empty or null, sends to all users"
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: "Optional additional metadata"
               required:
+                - targetUserIds
+                - channels
                 - title
                 - body
       responses:
-        '200':
-          description: Notification broadcast initiated
+        '202':
+          description: Notification broadcast accepted for delivery
           content:
             application/json:
               schema:
@@ -1775,8 +1792,12 @@ paths:
                 properties:
                   message:
                     type: string
-                  recipientCount:
-                    type: integer
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
         '403':
           description: Forbidden (admin only)
           content:
@@ -1926,15 +1947,8 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
+        '204':
           description: File deleted successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
         '404':
           description: File not found
           content:
