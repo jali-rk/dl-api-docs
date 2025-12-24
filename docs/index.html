@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dopamine Lite – API Documentation</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/swagger-ui-dist/swagger-ui.css"
+  />
+
+  <style>
+    body {
+      margin: 0;
+    }
+    #topbar {
+      padding: 10px 20px;
+      background: #1f2937;
+      color: white;
+      font-family: sans-serif;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    select {
+      padding: 6px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <strong>Dopamine Lite API Docs</strong>
+
+    <label for="apiSelect">Service:</label>
+    <select id="apiSelect">
+      <option value="bff_openapi_api_design.yaml">BFF API</option>
+      <option value="User Service API.yaml">User Service</option>
+      <option value="File Upload Service API.yaml">File Upload Service</option>
+      <option value="Issues and Chat Service API.yaml">Issues & Chat Service</option>
+      <option value="Notification Service API.yaml">Notification Service</option>
+      <option value="Payment Submission Portal Service API.yaml">Payment Submission Portal</option>
+    </select>
+  </div>
+
+  <!-- Swagger UI -->
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+  <script>
+    let ui;
+
+    function loadSwagger(spec) {
+      ui = SwaggerUIBundle({
+        url: spec,
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIBundle.SwaggerUIStandalonePreset
+        ],
+        layout: "BaseLayout"
+      });
+    }
+
+    // Initial load
+    loadSwagger(document.getElementById("apiSelect").value);
+
+    // Switch API
+    document.getElementById("apiSelect").addEventListener("change", function () {
+      document.getElementById("swagger-ui").innerHTML = "";
+      loadSwagger(this.value);
+    });
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,797 @@
+openapi: 3.0.3
+info:
+  title: DopamineLite Issues & Chat Service API
+  version: "1.1.0"
+  description: |
+    Issues & Chat microservice for DopamineLite.
+
+    Responsibilities:
+      - Manage student issues (create, list, assign, status changes).
+      - Provide two-way chat between student and admin per issue via WebSocket.
+      - Enforce status flow (Open → In Progress → Solved).
+      - Lock chat when issue is Solved (read-only).
+      - Generate downloadable “issue solved report”.
+
+servers:
+  - url: https://issues-service.internal/api/v1
+
+tags:
+  - name: Issues
+    description: Issue lifecycle (student + admin)
+  - name: Messages
+    description: Issue message history (REST) – realtime chat via WebSocket
+  - name: Reports
+    description: Issue solved report export
+  - name: WebSocket
+    description: WebSocket endpoints for realtime issue chat & status
+
+security:
+  - serviceAuth: []
+
+components:
+  securitySchemes:
+    serviceAuth:
+      type: apiKey
+      in: header
+      name: X-Service-Token
+
+  parameters:
+    PaginationLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PaginationOffset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+    ErrorObject:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    Role:
+      type: string
+      enum: [STUDENT, ADMIN, MAIN_ADMIN]
+
+    IssueStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, SOLVED]
+
+    IssueAssignmentStatus:
+      type: string
+      enum: [UNASSIGNED, ASSIGNED]
+
+    UploadedFileRef:
+      type: object
+      description: "Reference to a file stored in the File Storage Service."
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        fileType:
+          type: string
+          example: "image/png"
+      required:
+        - fileId
+        - fileName
+        - fileType
+
+    Issue:
+      type: object
+      description: "Internal issue model (IDs only; BFF joins with User Service for user details)."
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        studentId:
+          type: string
+          format: uuid
+        assignedAdminId:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: '#/components/schemas/IssueStatus'
+        assignmentStatus:
+          $ref: '#/components/schemas/IssueAssignmentStatus'
+        isChatReadOnly:
+          type: boolean
+          description: "True when status is SOLVED."
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        solvedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - title
+        - description
+        - studentId
+        - status
+        - assignmentStatus
+        - isChatReadOnly
+        - createdAt
+        - updatedAt
+
+    IssueListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Issue'
+        total:
+          type: integer
+      required:
+        - items
+        - total
+
+    IssueCreateRequest:
+      type: object
+      description: "Used by BFF /issues (POST) when a student submits an issue."
+      properties:
+        studentId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        attachments:
+          type: array
+          description: "Optional screenshot/video/file references (already stored)."
+          items:
+            $ref: '#/components/schemas/UploadedFileRef'
+      required:
+        - studentId
+        - title
+        - description
+
+    IssueUpdateStatusRequest:
+      type: object
+      description: |
+        Used by BFF /admin/issues/{issueId}/status.
+
+        Valid status transitions:
+          - OPEN → IN_PROGRESS
+          - IN_PROGRESS → SOLVED
+      properties:
+        status:
+          $ref: '#/components/schemas/IssueStatus'
+      required:
+        - status
+
+    IssueAssignRequest:
+      type: object
+      description: "Used by BFF /admin/issues/{issueId}/assign."
+      properties:
+        adminId:
+          type: string
+          format: uuid
+      required:
+        - adminId
+
+    IssueMessage:
+      type: object
+      description: "Chat message within an issue."
+      properties:
+        id:
+          type: string
+          format: uuid
+        issueId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+          format: uuid
+        senderRole:
+          $ref: '#/components/schemas/Role'
+        content:
+          type: string
+        attachment:
+          $ref: '#/components/schemas/UploadedFileRef'
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - issueId
+        - senderId
+        - senderRole
+        - content
+        - createdAt
+
+    IssueMessageListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueMessage'
+        total:
+          type: integer
+      required:
+        - items
+        - total
+
+    IssueReportMetadata:
+      type: object
+      description: "Metadata returned alongside the binary report if needed."
+      properties:
+        issueId:
+          type: string
+          format: uuid
+        generatedAt:
+          type: string
+          format: date-time
+        reportType:
+          type: string
+          example: "ISSUE_SOLVED_REPORT"
+
+    # ===== WebSocket schema definitions =====
+
+    WebSocketMessageEnvelope:
+      type: object
+      description: "Generic envelope for WebSocket messages."
+      properties:
+        type:
+          type: string
+          description: |
+            Message type, e.g.:
+              - SUBSCRIBE_ISSUE
+              - UNSUBSCRIBE_ISSUE
+              - SEND_MESSAGE
+              - MESSAGE
+              - MESSAGE_ACK
+              - ISSUE_STATUS_UPDATE
+              - ERROR
+        issueId:
+          type: string
+          format: uuid
+          nullable: true
+        clientMessageId:
+          type: string
+          nullable: true
+          description: "Client-generated ID for correlating SEND_MESSAGE with MESSAGE_ACK."
+        payload:
+          type: object
+          description: "Type-specific content."
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - type
+
+    WebSocketSendMessagePayload:
+      type: object
+      description: "Payload inside SEND_MESSAGE over WebSocket."
+      properties:
+        content:
+          type: string
+        attachments:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/UploadedFileRef'
+      required:
+        - content
+
+    WebSocketMessageEventPayload:
+      type: object
+      description: "Payload inside MESSAGE event over WebSocket."
+      allOf:
+        - $ref: '#/components/schemas/IssueMessage'
+
+    WebSocketIssueStatusUpdatePayload:
+      type: object
+      description: "Payload inside ISSUE_STATUS_UPDATE event over WebSocket."
+      properties:
+        oldStatus:
+          $ref: '#/components/schemas/IssueStatus'
+        newStatus:
+          $ref: '#/components/schemas/IssueStatus'
+        isChatReadOnly:
+          type: boolean
+        solvedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - newStatus
+        - isChatReadOnly
+
+    WebSocketErrorPayload:
+      type: object
+      description: "Payload inside ERROR event over WebSocket."
+      allOf:
+        - $ref: '#/components/schemas/ErrorObject'
+
+paths:
+  #################################
+  # STUDENT + ADMIN ISSUE LIST / CREATE
+  #################################
+  /issues:
+    post:
+      tags: [Issues]
+      summary: Create a new issue
+      description: |
+        Used by BFF `/issues` (POST) for student issue submission.
+
+        Requirements: title, description, related screenshots/videos.
+      security:
+        - serviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueCreateRequest'
+      responses:
+        '201':
+          description: Issue created (status=OPEN, assignmentStatus=UNASSIGNED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+    get:
+      tags: [Issues]
+      summary: List issues with filters
+      description: |
+        Used by:
+          - BFF `/issues` (GET) for current student:
+              → `studentId={currentUserId}`
+          - BFF `/admin/issues` (GET) for admins:
+              → filters by status / assignmentStatus / assignedAdminId.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: studentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: "Filter issues for a specific student."
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/IssueStatus'
+        - name: assignmentStatus
+          in: query
+          schema:
+            $ref: '#/components/schemas/IssueAssignmentStatus'
+        - name: assignedAdminId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of issues
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueListResponse'
+
+  #################################
+  # ISSUE DETAIL / ASSIGNMENT / STATUS
+  #################################
+  /issues/{issueId}:
+    get:
+      tags: [Issues]
+      summary: Get issue details
+      description: |
+        Used by BFF `/issues/{issueId}` and `/admin/issues/{issueId}`.
+
+        BFF will enrich the response with student/admin details from User Service.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Issue found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /issues/{issueId}/assign:
+    post:
+      tags: [Issues]
+      summary: Assign an issue to an admin
+      description: |
+        Used by BFF `/admin/issues/{issueId}/assign`.
+
+        Typically used when an admin “takes” the issue.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueAssignRequest'
+      responses:
+        '200':
+          description: Issue assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /issues/{issueId}/status:
+    patch:
+      tags: [Issues]
+      summary: Update issue status (Open → In Progress → Solved)
+      description: |
+        Used by BFF `/admin/issues/{issueId}/status`.
+
+        Rules:
+          - Status flow: OPEN → IN_PROGRESS → SOLVED.
+          - Once marked SOLVED, chat becomes read-only.
+
+        Service responsibilities:
+          - Validate status transitions.
+          - When status becomes SOLVED:
+              * mark isChatReadOnly = true
+              * set solvedAt = now
+          - Optionally broadcast ISSUE_STATUS_UPDATE event over WebSocket
+            to all subscribers of this issue.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueUpdateStatusRequest'
+      responses:
+        '200':
+          description: Issue status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # CHAT MESSAGE HISTORY (REST: READ ONLY)
+  #################################
+  /issues/{issueId}/messages:
+    get:
+      tags: [Messages]
+      summary: List messages of an issue
+      description: |
+        Used by BFF `/issues/{issueId}/messages` (GET) to load chat history.
+
+        - Returns messages ordered by createdAt ascending.
+        - New messages are sent/received via WebSocket, not REST.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: Issue messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueMessageListResponse'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # ISSUE SOLVED REPORT
+  #################################
+  /issues/{issueId}/report:
+    get:
+      tags: [Reports]
+      summary: Generate and download an issue solved report
+      description: |
+        Used by BFF `/admin/issues/{issueId}/export-report`.
+
+        “Issue solved report” should include:
+          - Issue details submitted
+          - Conversation log
+          - Current status
+          - Responsible admin id (BFF resolves name)
+          - Timestamp
+
+        Service responsibilities:
+          - Fetch issue details and messages.
+          - Produce a PDF (or other binary) report.
+          - Return as binary stream.
+
+        Note: This endpoint is typically only allowed when issue.status = SOLVED,
+        but the service may also allow generation for other statuses depending on rules.
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Issue report file
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: Report cannot be generated due to business rules (e.g., issue not solved yet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # WEBSOCKET HANDSHAKE (SPRING BOOT)
+  #################################
+  /ws:
+    get:
+      tags: [WebSocket]
+      summary: WebSocket handshake for issues chat
+      description: |
+        HTTP endpoint used for WebSocket upgrade in Spring Boot.
+
+        Typical configuration:
+          - STOMP over WebSocket enabled at /ws
+          - applicationDestinationPrefixes: /app
+          - topic/broadcast prefix: /topic
+
+        Example client flow (BFF or MFEs directly):
+
+          1. Connect WebSocket:
+             wss://issues-service.internal/api/v1/ws
+
+          2. STOMP:
+             - SEND to `/app/issues/{issueId}/send` to send a message
+             - SUBSCRIBE to `/topic/issues/{issueId}` to receive:
+                 - MESSAGE events
+                 - ISSUE_STATUS_UPDATE events
+
+        See custom `x-websocket` section for exact message shapes.
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade)
+        '400':
+          description: Bad request (upgrade failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+# ============================
+# Custom WebSocket documentation
+# ============================
+x-websocket:
+  description: |
+    WebSocket API for realtime issue chat & status updates.
+    Implemented in Spring Boot with STOMP over WebSocket.
+
+    Endpoints & destinations:
+
+      - Handshake endpoint:
+          /ws
+
+      - STOMP application destinations (client → server):
+          /app/issues/{issueId}/subscribe
+          /app/issues/{issueId}/unsubscribe
+          /app/issues/{issueId}/send
+
+      - STOMP topic destinations (server → client):
+          /topic/issues/{issueId}          # MESSAGE and ISSUE_STATUS_UPDATE events
+          /topic/issues/{issueId}/errors   # ERROR events (optional)
+
+  handshake:
+    url: wss://issues-service.internal/api/v1/ws
+    queryParameters:
+      token:
+        description: "Optional service token for BFF-level auth (or use headers)."
+      userId:
+        description: "ID of the connected user (student/admin)."
+      role:
+        description: "Role of the connected user (STUDENT, ADMIN, MAIN_ADMIN)."
+
+  clientMessages:
+    SUBSCRIBE_ISSUE:
+      destination: "/app/issues/{issueId}/subscribe"
+      payload:
+        type: object
+        properties:
+          issueId:
+            type: string
+            format: uuid
+        required: [issueId]
+
+    UNSUBSCRIBE_ISSUE:
+      destination: "/app/issues/{issueId}/unsubscribe"
+      payload:
+        type: object
+        properties:
+          issueId:
+            type: string
+            format: uuid
+        required: [issueId]
+
+    SEND_MESSAGE:
+      destination: "/app/issues/{issueId}/send"
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/WebSocketSendMessagePayload'
+        example:
+          content: "Hi sir, I have a problem with my portal."
+          attachments:
+            - fileId: "a9e3f4d2-..."
+              fileName: "screenshot.png"
+              fileType: "image/png"
+
+  serverMessages:
+    MESSAGE:
+      destination: "/topic/issues/{issueId}"
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [MESSAGE]
+          issueId:
+            type: string
+            format: uuid
+          payload:
+            $ref: '#/components/schemas/WebSocketMessageEventPayload'
+        required: [type, issueId, payload]
+
+    ISSUE_STATUS_UPDATE:
+      destination: "/topic/issues/{issueId}"
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [ISSUE_STATUS_UPDATE]
+          issueId:
+            type: string
+            format: uuid
+          payload:
+            $ref: '#/components/schemas/WebSocketIssueStatusUpdatePayload'
+        required: [type, issueId, payload]
+
+    MESSAGE_ACK:
+      destination: "/topic/issues/{issueId}"
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [MESSAGE_ACK]
+          issueId:
+            type: string
+            format: uuid
+          clientMessageId:
+            type: string
+          payload:
+            type: object
+            properties:
+              messageId:
+                type: string
+                format: uuid
+        required: [type, issueId, clientMessageId, payload]
+
+    ERROR:
+      destination: "/topic/issues/{issueId}/errors"
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [ERROR]
+          issueId:
+            type: string
+            format: uuid
+            nullable: true
+          payload:
+            $ref: '#/components/schemas/WebSocketErrorPayload'
+        required: [type, payload]

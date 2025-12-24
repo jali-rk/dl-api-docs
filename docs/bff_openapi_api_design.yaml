@@ -1,0 +1,1513 @@
+openapi: 3.0.3
+info:
+  title: DopamineLite BFF API
+  version: "1.0.0"
+  description: |
+    BFF (Backend-For-Frontend) API for DopamineLite.
+    Acts as the single entry point for MFEs:
+      - Auth & Onboarding MFE
+      - Student MFE
+      - Admin MFE
+    Responsibilities:
+      - Authentication & authorization
+      - Enforcing domain rules (profile edit windows, status transitions, etc.)
+      - Orchestrating calls to backend microservices:
+        * User Service
+        * Payment Submission Portal Service
+        * Issues & Chat Service
+        * File Storage Service
+        * Notification Service
+
+servers:
+  - url: https://dev-api.ginderbreaddopamine.com
+    description: Development server
+
+tags:
+  - name: Auth
+    description: Authentication and onboarding
+  - name: Students
+    description: Student profile and self-service
+  - name: Portals
+    description: Payment submission portals
+  - name: PaymentSubmissions
+    description: Payment submissions and data sheets
+  - name: Issues
+    description: Issue reporting and chat
+  - name: Notifications
+    description: In-app notification APIs
+  - name: AdminUsers
+    description: Admin & main-admin management
+  - name: AdminPayments
+    description: Admin payment review & exports
+  - name: AdminIssues
+    description: Admin issue handling & exports
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PaginationLimit:
+      name: limit
+      in: query
+      description: Page size
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PaginationOffset:
+      name: offset
+      in: query
+      description: Pagination offset
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+    StandardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+      required:
+        - success
+
+    ErrorObject:
+      type: object
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    Role:
+      type: string
+      enum: [STUDENT, ADMIN, MAIN_ADMIN]
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        whatsappNumber:
+          type: string
+        school:
+          type: string
+          nullable: true
+        address:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        codeNumber:
+          type: string
+          description: "6-digit unique code assigned to student"
+        isVerified:
+          type: boolean
+      required:
+        - id
+        - fullName
+        - email
+        - whatsappNumber
+        - address
+        - role
+        - isVerified
+
+    StudentProfile:
+      allOf:
+        - $ref: '#/components/schemas/UserSummary'
+        - type: object
+          properties:
+            canEditProfile:
+              type: boolean
+              description: "True if within allowed edit windows (1–5, 26–30/31)"
+              example: true
+            editWindowReason:
+              type: string
+              nullable: true
+              description: "Explanation if profile editing is locked"
+
+    RegistrationRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        whatsappNumber:
+          type: string
+        school:
+          type: string
+          nullable: true
+        address:
+          type: string
+        password:
+          type: string
+          format: password
+      required:
+        - fullName
+        - email
+        - whatsappNumber
+        - address
+        - password
+
+    RegistrationResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        codeSent:
+          type: boolean
+          description: "True if verification code email was successfully triggered"
+      required:
+        - userId
+        - email
+        - codeSent
+
+    VerifyCodeRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          description: "6-digit verification code"
+      required:
+        - email
+        - code
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+      required:
+        - email
+        - password
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserSummary'
+      required:
+        - accessToken
+        - user
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+      required:
+        - refreshToken
+
+    UpdateStudentProfileRequest:
+      type: object
+      description: "Partial update; BFF enforces date-window rule"
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+        whatsappNumber:
+          type: string
+        school:
+          type: string
+          nullable: true
+        address:
+          type: string
+
+    PortalVisibility:
+      type: string
+      enum: [PUBLISHED, HIDDEN]
+
+    PaymentPortal:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        year:
+          type: integer
+        name:
+          type: string
+          description: "Human-readable portal name (e.g., 'November 2025 Advanced Physics')"
+        displayName:
+          type: string
+        isPublished:
+          type: boolean
+        visibility:
+          $ref: '#/components/schemas/PortalVisibility'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - month
+        - year
+        - name
+        - displayName
+        - isPublished
+
+    SubmissionStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED]
+
+    PaymentSubmission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        student:
+          $ref: '#/components/schemas/UserSummary'
+        portal:
+          $ref: '#/components/schemas/PaymentPortal'
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        rejectionReason:
+          type: string
+          nullable: true
+        uploadedFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadedFile'
+        submittedAt:
+          type: string
+          format: date-time
+        lastUpdatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - student
+        - portal
+        - status
+        - uploadedFiles
+        - submittedAt
+
+    UploadedFile:
+      type: object
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        fileType:
+          type: string
+          example: "application/pdf"
+        url:
+          type: string
+          description: "Pre-signed or proxied URL served via File Storage Service"
+      required:
+        - fileId
+        - fileName
+        - fileType
+        - url
+
+    IssueStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, SOLVED]
+
+    IssueAssignmentStatus:
+      type: string
+      enum: [UNASSIGNED, ASSIGNED]
+
+    Issue:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        student:
+          $ref: '#/components/schemas/UserSummary'
+        assignedAdmin:
+          $ref: '#/components/schemas/UserSummary'
+          nullable: true
+        status:
+          $ref: '#/components/schemas/IssueStatus'
+        assignmentStatus:
+          $ref: '#/components/schemas/IssueAssignmentStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        isChatReadOnly:
+          type: boolean
+          description: "True when status is SOLVED and chat is closed"
+      required:
+        - id
+        - title
+        - description
+        - student
+        - status
+        - assignmentStatus
+
+    IssueMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        issueId:
+          type: string
+          format: uuid
+        senderRole:
+          $ref: '#/components/schemas/Role'
+        senderId:
+          type: string
+          format: uuid
+        content:
+          type: string
+        attachment:
+          $ref: '#/components/schemas/UploadedFile'
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - issueId
+        - senderRole
+        - senderId
+        - content
+        - createdAt
+
+    NotificationType:
+      type: string
+      enum: [IN_APP, EMAIL, WHATSAPP]
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+        body:
+          type: string
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - userId
+        - type
+        - title
+        - body
+        - isRead
+        - createdAt
+
+    AdminUpdateSubmissionStatusRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        rejectionReason:
+          type: string
+          nullable: true
+          description: "Required when setting status to REJECTED"
+      required:
+        - status
+
+    IssueCreateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        attachmentIds:
+          type: array
+          description: "Optional file IDs uploaded via generic file upload endpoint"
+          items:
+            type: string
+            format: uuid
+      required:
+        - title
+        - description
+
+    IssueAssignRequest:
+      type: object
+      properties:
+        adminId:
+          type: string
+          format: uuid
+          description: "Admin who is taking ownership of the issue"
+      required:
+        - adminId
+
+    IssueStatusUpdateRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/IssueStatus'
+      required:
+        - status
+
+    IssueMessageCreateRequest:
+      type: object
+      properties:
+        content:
+          type: string
+        attachmentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+      required:
+        - content
+
+    ExportFormat:
+      type: string
+      enum: [XLSX, CSV, PDF]
+
+    DataSheetType:
+      type: string
+      enum: [APPROVED, REJECTED, PENDING, ALL]
+
+    AdminCreateRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        whatsappNumber:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+          enum: [ADMIN, MAIN_ADMIN]
+      required:
+        - fullName
+        - email
+        - whatsappNumber
+        - password
+        - role
+
+paths:
+  #################################
+  # AUTH & ONBOARDING
+  #################################
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new student
+      description: |
+        Creates a new student in User Service and triggers a 6-digit verification code email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationRequest'
+      responses:
+        '201':
+          description: Registration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResponse'
+        '400':
+          description: Validation error or email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/verify-code:
+    post:
+      tags: [Auth]
+      summary: Verify student using code number
+      description: |
+        Validates the 6-digit code and activates the student profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyCodeRequest'
+      responses:
+        '200':
+          description: Code verified and account activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentProfile'
+        '400':
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/refresh-token:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user details
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # STUDENT PROFILE
+  #################################
+  /students/me/profile:
+    get:
+      tags: [Students]
+      summary: Get current student profile
+      description: Includes edit-window flags.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Student profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+    patch:
+      tags: [Students]
+      summary: Update student profile (only in allowed windows)
+      description: |
+        BFF enforces the allowed edit windows:
+        - 1st–5th
+        - 26th–30th/31st
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStudentProfileRequest'
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentProfile'
+        '403':
+          description: Profile editing not allowed outside edit windows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # PAYMENT PORTALS (STUDENT & ADMIN VIEW)
+  #################################
+  /payment/portals:
+    get:
+      tags: [Portals]
+      summary: List payment submission portals
+      description: |
+        Students see only published portals.
+        Admins can filter by visibility.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: month
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: includeHidden
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: "Admins only; ignored for students"
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of portals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentPortal'
+                  total:
+                    type: integer
+
+  /admin/payment/portals:
+    post:
+      tags: [AdminPayments]
+      summary: Create a new payment portal
+      description: Main admin only.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                month:
+                  type: integer
+                  minimum: 1
+                  maximum: 12
+                year:
+                  type: integer
+                name:
+                  type: string
+                displayName:
+                  type: string
+                isPublished:
+                  type: boolean
+                  default: false
+              required:
+                - month
+                - year
+                - name
+      responses:
+        '201':
+          description: Portal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentPortal'
+        '403':
+          description: Forbidden (only MAIN_ADMIN)
+    patch:
+      tags: [AdminPayments]
+      summary: Bulk update portal visibility
+      description: Publish/unpublish portals (main admin).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                portalIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                isPublished:
+                  type: boolean
+              required:
+                - portalIds
+                - isPublished
+      responses:
+        '200':
+          description: Portals updated
+        '403':
+          description: Forbidden
+
+  #################################
+  # PAYMENT SUBMISSIONS (STUDENT)
+  #################################
+  /payment/portals/{portalId}/submissions:
+    post:
+      tags: [PaymentSubmissions]
+      summary: Submit payment for a portal
+      description: |
+        Students upload PDFs or images.
+        BFF uploads files to File Storage Service and then records submission in Payment Service.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: portalId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                portalNameConfirmation:
+                  type: string
+                  description: "Student must re-enter the portal name"
+                files:
+                  type: array
+                  description: "PDFs and images"
+                  items:
+                    type: string
+                    format: binary
+              required:
+                - portalNameConfirmation
+                - files
+      responses:
+        '201':
+          description: Submission created (initial status PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSubmission'
+        '400':
+          description: Invalid portal or file
+        '403':
+          description: Portal not accessible
+
+  /payment/submissions/me:
+    get:
+      tags: [PaymentSubmissions]
+      summary: List current student's payment submissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SubmissionStatus'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of submissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentSubmission'
+                  total:
+                    type: integer
+
+  #################################
+  # PAYMENT SUBMISSIONS (ADMIN)
+  #################################
+  /admin/payment/submissions:
+    get:
+      tags: [AdminPayments]
+      summary: List payment submissions for review
+      description: |
+        Admins can filter by status, portal, and student attributes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SubmissionStatus'
+        - name: portalId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: email
+          in: query
+          schema:
+            type: string
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: whatsappNumber
+          in: query
+          schema:
+            type: string
+        - name: codeNumber
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of submissions with student details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentSubmission'
+                  total:
+                    type: integer
+  /admin/payment/submissions/{submissionId}:
+    patch:
+      tags: [AdminPayments]
+      summary: Update submission status (approve/reject/pending)
+      description: |
+        - Approve: adds to official data sheet.
+        - Reject: requires explanation.
+        - Pending: default/neutral.
+        Triggers email notification via Notification Service.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateSubmissionStatusRequest'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSubmission'
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden
+
+  /admin/payment/data-sheets/export:
+    get:
+      tags: [AdminPayments]
+      summary: Export payment data sheets
+      description: |
+        Exports a payment data sheet for the given month/year and status filter.
+
+        - `type` controls which submissions are included (APPROVED, REJECTED, PENDING, ALL).
+        - `format` controls the export format (XLSX, CSV, PDF).
+        - `columns` allows callers to specify which columns to include and in what order.
+          If `columns` is omitted or empty, a default set of columns will be exported.
+
+        Typical column keys:
+          - "studentName"
+          - "email"
+          - "whatsappNumber"
+          - "codeNumber"
+          - "school"
+          - "address"
+          - "portalName"
+          - "portalMonth"
+          - "portalYear"
+          - "status"
+          - "rejectionReason"
+          - "submittedAt"
+          - "lastUpdatedAt"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/DataSheetType'
+        - name: format
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+        - name: month
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: columns
+          in: query
+          description: |
+            List of column keys to include in the export, in the desired order.
+            If omitted, the BFF will use a sensible default column set.
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+            example:
+              - studentName
+              - email
+              - whatsappNumber
+              - codeNumber
+              - portalName
+              - status
+              - submittedAt
+          style: form
+          explode: true
+      responses:
+        '200':
+          description: Exported file stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid parameters (e.g., unsupported column key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'  
+
+
+  #################################
+  # ADMIN - STUDENT SEARCH & MANAGEMENT
+  #################################
+  /admin/students/search:
+    get:
+      tags: [AdminUsers]
+      summary: Search students
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: query
+          schema:
+            type: string
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: whatsappNumber
+          in: query
+          schema:
+            type: string
+        - name: codeNumber
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: Matching students
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StudentProfile'
+                  total:
+                    type: integer
+
+  /admin/admins:
+    post:
+      tags: [AdminUsers]
+      summary: Create an admin or main admin
+      description: Main admin only.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCreateRequest'
+      responses:
+        '201':
+          description: Admin created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '403':
+          description: Forbidden (not MAIN_ADMIN)
+
+  #################################
+  # ISSUES (STUDENT SIDE)
+  #################################
+  /issues:
+    post:
+      tags: [Issues]
+      summary: Submit a new issue
+      description: |
+        Student submits an issue; optional attachments previously uploaded
+        via generic file upload.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueCreateRequest'
+      responses:
+        '201':
+          description: Issue created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+    get:
+      tags: [Issues]
+      summary: List issues of current student
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/IssueStatus'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of issues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Issue'
+                  total:
+                    type: integer
+
+  /issues/{issueId}:
+    get:
+      tags: [Issues]
+      summary: Get issue details for current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Issue details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+        '403':
+          description: Forbidden if user not participant (student or assigned admin)
+
+  /issues/{issueId}/messages:
+    get:
+      tags: [Issues]
+      summary: List chat messages for an issue
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IssueMessage'
+                  total:
+                    type: integer
+    post:
+      tags: [Issues]
+      summary: Send a message in issue chat
+      description: |
+        Disabled when issue is SOLVED (chat read-only).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueMessageCreateRequest'
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueMessage'
+        '403':
+          description: Chat closed
+
+  #################################
+  # ISSUES (ADMIN SIDE)
+  #################################
+  /admin/issues:
+    get:
+      tags: [AdminIssues]
+      summary: List all issues
+      description: |
+        Admins can see all issues and filter by assignment and status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/IssueStatus'
+        - name: assignmentStatus
+          in: query
+          schema:
+            $ref: '#/components/schemas/IssueAssignmentStatus'
+        - name: assignedAdminId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of issues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Issue'
+                  total:
+                    type: integer
+
+  /admin/issues/{issueId}/assign:
+    post:
+      tags: [AdminIssues]
+      summary: Assign an issue to an admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueAssignRequest'
+      responses:
+        '200':
+          description: Issue assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+
+  /admin/issues/{issueId}/status:
+    patch:
+      tags: [AdminIssues]
+      summary: Update issue status
+      description: |
+        Status flow: OPEN → IN_PROGRESS → SOLVED.
+        When SOLVED, BFF marks chat read-only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueStatusUpdateRequest'
+      responses:
+        '200':
+          description: Issue updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
+
+  /admin/issues/{issueId}/export-report:
+    get:
+      tags: [AdminIssues]
+      summary: Export issue solved report
+      description: |
+        Generates a downloadable report including:
+          - Issue details
+          - Conversation log
+          - Status
+          - Responsible admin
+          - Timestamp
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Report file
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  #################################
+  # NOTIFICATIONS
+  #################################
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  total:
+                    type: integer
+
+  /notifications/{notificationId}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+
+  #################################
+  # GENERIC FILE UPLOAD (FOR ISSUES, ETC.)
+  #################################
+  /files/upload:
+    post:
+      tags: [Students]
+      summary: Upload a file (generic)
+      description: |
+        Generic file upload to File Storage Service, used by:
+          - Issue attachments (screenshots, videos)
+          - Other future modules.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadedFile'
