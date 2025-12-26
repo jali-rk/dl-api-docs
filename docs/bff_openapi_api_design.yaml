@@ -646,6 +646,70 @@ components:
           type: string
           format: date-time
 
+  responses:
+    BadRequestError:
+      description: Bad Request - Invalid input or validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            success: false
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Invalid request parameters"
+              details:
+                field: "email"
+                issue: "Invalid email format"
+
+    UnauthorizedError:
+      description: Unauthorized - Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            success: false
+            error:
+              code: "UNAUTHORIZED"
+              message: "Authentication required"
+
+    ForbiddenError:
+      description: Forbidden - Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            success: false
+            error:
+              code: "FORBIDDEN"
+              message: "You do not have permission to access this resource"
+
+    NotFoundError:
+      description: Not Found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            success: false
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+
+    InternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            success: false
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"
+
 paths:
   #################################
   # AUTH & ONBOARDING
@@ -1620,6 +1684,12 @@ paths:
     get:
       tags: [Notifications]
       summary: List notifications for current user
+      description: |
+        Retrieve notifications for the authenticated user.
+        
+        - Supports filtering by unread status and channel (IN_APP, EMAIL, WHATSAPP)
+        - Pagination with limit/offset
+        - Maps to notification service GET /notifications
       security:
         - bearerAuth: []
       parameters:
@@ -1628,6 +1698,13 @@ paths:
           schema:
             type: boolean
             default: false
+          description: Filter to show only unread notifications
+        - name: channel
+          in: query
+          schema:
+            type: string
+            enum: [IN_APP, EMAIL, WHATSAPP]
+          description: Filter by notification channel
         - $ref: '#/components/parameters/PaginationLimit'
         - $ref: '#/components/parameters/PaginationOffset'
       responses:
@@ -1638,17 +1715,30 @@ paths:
               schema:
                 type: object
                 properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Notification'
-                  total:
-                    type: integer
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Notification'
+                      total:
+                        type: integer
+                        example: 45
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
 
-  /notifications/{notificationId}/read:
-    patch:
+  /notifications/{notificationId}:
+    get:
       tags: [Notifications]
-      summary: Mark a notification as read
+      summary: Get a single notification
+      description: |
+        Retrieve details of a specific notification.
+        
+        Maps to notification service GET /notifications/{notificationId}
       security:
         - bearerAuth: []
       parameters:
@@ -1660,11 +1750,701 @@ paths:
             format: uuid
       responses:
         '200':
+          description: Notification details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Notification'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /notifications/{notificationId}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      description: |
+        Mark a notification as read (or unread).
+        Sets `isRead=true` and `readAt=now` for the notification.
+        
+        Maps to notification service PATCH /notifications/{notificationId}/read
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isRead:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
           description: Updated notification
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Notification'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Notification'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  #################################
+  # ADMIN - NOTIFICATIONS
+  #################################
+  /admin/notifications/broadcast:
+    post:
+      tags: [Admin, Notifications]
+      summary: Send broadcast notification to multiple users
+      description: |
+        Admin endpoint to send notifications to multiple users across multiple channels.
+        
+        **Channels:**
+        - `IN_APP`: In-app notification (shown in user's notification list)
+        - `EMAIL`: Email notification
+        - `WHATSAPP`: WhatsApp notification
+        
+        **Use cases:**
+        - System announcements
+        - Maintenance notifications
+        - Important updates
+        - Custom admin messages
+        
+        Maps to notification service POST /notifications/send
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - targetUserIds
+                - channels
+                - title
+                - body
+              properties:
+                targetUserIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: List of user IDs to send notification to
+                  example: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"]
+                channels:
+                  type: array
+                  items:
+                    type: string
+                    enum: [IN_APP, EMAIL, WHATSAPP]
+                  description: Delivery channels for the notification
+                  example: ["IN_APP", "EMAIL"]
+                title:
+                  type: string
+                  description: Notification title
+                  example: "System Maintenance Notice"
+                body:
+                  type: string
+                  description: Notification body/message
+                  example: "The system will be under maintenance on December 30th from 2 AM to 4 AM. Please plan accordingly."
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: Optional metadata for the notification
+                  example:
+                    priority: "high"
+                    category: "system"
+      responses:
+        '202':
+          description: Broadcast notification request accepted for processing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "Broadcast notification request accepted"
+                      targetUserCount:
+                        type: integer
+                        example: 2
+                      channels:
+                        type: array
+                        items:
+                          type: string
+                        example: ["IN_APP", "EMAIL"]
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/notifications:
+    get:
+      tags: [Admin, Notifications]
+      summary: List broadcast notification history
+      description: |
+        Retrieve history of admin-initiated broadcast notifications.
+        Shows metadata about each broadcast send operation.
+        
+        Maps to notification service GET /broadcasts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sentBy
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by admin user who sent
+        - name: dateFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter broadcasts sent after this date
+        - name: dateTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter broadcasts sent before this date
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in title and body
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of broadcast records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              format: uuid
+                            templateId:
+                              type: string
+                              format: uuid
+                              nullable: true
+                            title:
+                              type: string
+                            body:
+                              type: string
+                            channels:
+                              type: array
+                              items:
+                                type: string
+                            recipientCount:
+                              type: integer
+                            successCount:
+                              type: integer
+                            failureCount:
+                              type: integer
+                            sentBy:
+                              type: string
+                              format: uuid
+                            sentAt:
+                              type: string
+                              format: date-time
+                      total:
+                        type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/notifications/{broadcastId}:
+    get:
+      tags: [Admin, Notifications]
+      summary: Get broadcast details
+      description: |
+        Retrieve details of a specific broadcast including delivery statistics.
+        
+        Maps to notification service GET /broadcasts/{broadcastId}
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: broadcastId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Broadcast details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      templateId:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      title:
+                        type: string
+                      body:
+                        type: string
+                      channels:
+                        type: array
+                        items:
+                          type: string
+                      recipientCount:
+                        type: integer
+                      successCount:
+                        type: integer
+                      failureCount:
+                        type: integer
+                      sentBy:
+                        type: string
+                        format: uuid
+                      sentAt:
+                        type: string
+                        format: date-time
+                      metadata:
+                        type: object
+                        additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/notification-templates:
+    get:
+      tags: [Admin, Notifications]
+      summary: List notification templates
+      description: |
+        Retrieve paginated list of notification templates.
+        Used to populate template selector in admin UI.
+        
+        Maps to notification service GET /templates
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [GENERAL, PERSONALIZED]
+          description: Filter by template type
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in templateName and templateId
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              format: uuid
+                            templateId:
+                              type: string
+                              example: "Notification 1"
+                            templateName:
+                              type: string
+                              example: "October Payment Approval"
+                            type:
+                              type: string
+                              enum: [GENERAL, PERSONALIZED]
+                            contentSinhala:
+                              type: string
+                              nullable: true
+                            contentEnglish:
+                              type: string
+                              nullable: true
+                            channels:
+                              type: array
+                              items:
+                                type: string
+                                enum: [IN_APP, EMAIL, WHATSAPP]
+                            sentTimes:
+                              type: integer
+                            createdBy:
+                              type: string
+                              format: uuid
+                            createdAt:
+                              type: string
+                              format: date-time
+                            updatedAt:
+                              type: string
+                              format: date-time
+                            metadata:
+                              type: object
+                              additionalProperties: true
+                      total:
+                        type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      tags: [Admin, Notifications]
+      summary: Create notification template
+      description: |
+        Create a new reusable notification template.
+        
+        **Template Types:**
+        - `GENERAL`: Same message for all recipients
+        - `PERSONALIZED`: Supports placeholders like {{month}}, {{studentName}}
+        
+        Maps to notification service POST /templates
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - templateId
+                - templateName
+                - type
+              properties:
+                templateId:
+                  type: string
+                  description: Display identifier
+                  example: "Notification 1"
+                templateName:
+                  type: string
+                  description: Human-readable name
+                  example: "October Payment Approval"
+                type:
+                  type: string
+                  enum: [GENERAL, PERSONALIZED]
+                contentSinhala:
+                  type: string
+                  nullable: true
+                  example: "ඔක්තෝබර් මස ගෙවීම අනුමත කර ඇත."
+                contentEnglish:
+                  type: string
+                  nullable: true
+                  example: "Your October payment has been approved."
+                channels:
+                  type: array
+                  items:
+                    type: string
+                    enum: [IN_APP, EMAIL, WHATSAPP]
+                  example: ["IN_APP", "EMAIL"]
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: Created template
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/notification-templates/{templateId}:
+    get:
+      tags: [Admin, Notifications]
+      summary: Get template details
+      description: Maps to notification service GET /templates/{templateId}
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: Template details
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    put:
+      tags: [Admin, Notifications]
+      summary: Update notification template
+      description: |
+        Update an existing template. All fields are optional.
+        
+        Maps to notification service PUT /templates/{templateId}
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                templateName:
+                  type: string
+                type:
+                  type: string
+                  enum: [GENERAL, PERSONALIZED]
+                contentSinhala:
+                  type: string
+                  nullable: true
+                contentEnglish:
+                  type: string
+                  nullable: true
+                channels:
+                  type: array
+                  items:
+                    type: string
+                    enum: [IN_APP, EMAIL, WHATSAPP]
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: Updated template
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    delete:
+      tags: [Admin, Notifications]
+      summary: Delete notification template
+      description: |
+        Delete a template. Returns 409 if template is in use.
+        
+        Maps to notification service DELETE /templates/{templateId}
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Template deleted
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: Template in use, cannot delete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/send-notification:
+    post:
+      tags: [Admin, Notifications]
+      summary: Send notification using template
+      description: |
+        Send notification using a predefined template.
+        Template placeholders (e.g., {{month}}, {{studentName}}) are replaced
+        with values from placeholderData.
+        
+        **For PERSONALIZED templates:**
+        - Provide placeholder values in `placeholderData`
+        - Example: Template has "{{studentName}}, your {{month}} payment is due"
+        - Send: `{"studentName": "John", "month": "December"}`
+        
+        Maps to notification service POST /notifications/send-from-template
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - templateId
+                - targetUserIds
+              properties:
+                templateId:
+                  type: string
+                  format: uuid
+                  description: UUID of template to use
+                targetUserIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: List of user IDs
+                  example: ["user1-uuid", "user2-uuid"]
+                placeholderData:
+                  type: object
+                  additionalProperties: true
+                  description: Key-value pairs for PERSONALIZED templates
+                  example:
+                    month: "December"
+                    studentName: "John Doe"
+                channels:
+                  type: array
+                  items:
+                    type: string
+                    enum: [IN_APP, EMAIL, WHATSAPP]
+                  description: Override template's default channels (optional)
+      responses:
+        '202':
+          description: Template-based send accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      broadcastId:
+                        type: string
+                        format: uuid
+                      message:
+                        type: string
+                        example: "Template-based send accepted"
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '400':
+          description: Missing required placeholder data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
 
   #################################
   # GENERIC FILE UPLOAD (FOR ISSUES, ETC.)
