@@ -17,16 +17,19 @@ info:
         * Issues & Chat Service
         * File Storage Service
         * Notification Service
+        * Video Service
 
 servers:
-  - url: https://dev-api.ginderbreaddopamine.com
-    description: Development server
+  - url: https://api.dopaminelite.com/bff/v1
+    description: Production server
+  - url: http://localhost:3000
+    description: Local development server
+  - url: http://localhost:3000/api/v1
+    description: Local development with API prefix
 
 tags:
   - name: Auth
     description: Authentication and onboarding
-  - name: Users
-    description: User public data access
   - name: Students
     description: Student profile and self-service
   - name: Portals
@@ -43,6 +46,14 @@ tags:
     description: Admin payment review & exports
   - name: AdminIssues
     description: Admin issue handling & exports
+  - name: Videos
+    description: Video management and playback
+  - name: Folders
+    description: Class/Folder management
+  - name: Notes
+    description: Note management
+  - name: Content
+    description: Content management (videos, PDFs, folders)
 
 security:
   - bearerAuth: []
@@ -139,25 +150,6 @@ components:
         - role
         - isVerified
 
-    UserPublicData:
-      type: object
-      properties:
-        fullName:
-          type: string
-        email:
-          type: string
-          format: email
-        whatsappNumber:
-          type: string
-        codeNumber:
-          type: string
-          description: "6-digit unique code assigned to student"
-      required:
-        - fullName
-        - email
-        - whatsappNumber
-        - codeNumber
-
     StudentProfile:
       allOf:
         - $ref: '#/components/schemas/UserSummary'
@@ -226,66 +218,6 @@ components:
       required:
         - email
         - code
-
-    ResendVerificationCodeRequest:
-      type: object
-      properties:
-        email:
-          type: string
-          format: email
-      required:
-        - email
-
-    ResendVerificationCodeResponse:
-      type: object
-      properties:
-        codeSent:
-          type: boolean
-        message:
-          type: string
-      required:
-        - codeSent
-        - message
-
-    ForgotPasswordRequest:
-      type: object
-      properties:
-        email:
-          type: string
-          format: email
-      required:
-        - email
-
-    ForgotPasswordResponse:
-      type: object
-      properties:
-        message:
-          type: string
-        emailSent:
-          type: boolean
-      required:
-        - message
-        - emailSent
-
-    ResetPasswordRequest:
-      type: object
-      properties:
-        token:
-          type: string
-        newPassword:
-          type: string
-          format: password
-      required:
-        - token
-        - newPassword
-
-    ResetPasswordResponse:
-      type: object
-      properties:
-        message:
-          type: string
-      required:
-        - message
 
     LoginRequest:
       type: object
@@ -511,11 +443,6 @@ components:
       type: string
       enum: [IN_APP, EMAIL, WHATSAPP]
 
-    NotificationChannel:
-      type: string
-      enum: [IN_APP, EMAIL, WHATSAPP]
-      description: "Notification delivery channel"
-
     Notification:
       type: object
       properties:
@@ -637,6 +564,88 @@ components:
         - password
         - role
 
+    Folder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        year:
+          type: integer
+        thumbnailUrl:
+          type: string
+        allowedEmails:
+          type: array
+          items:
+            type: string
+        videoCount:
+          type: integer
+        noteCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    VideoMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+        userEmail:
+          type: string
+        originalFileName:
+          type: string
+        description:
+          type: string
+        thumbnailUrl:
+          type: string
+        duration:
+          type: integer
+        status:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        resolutions:
+          type: array
+          items:
+            type: string
+        outputS3Key:
+          type: string
+        uploadTime:
+          type: string
+          format: date-time
+        processingCompletedTime:
+          type: string
+          format: date-time
+
+    Note:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        s3Key:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
 paths:
   #################################
   # AUTH & ONBOARDING
@@ -693,32 +702,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
 
-  /auth/resend-verification-code:
-    post:
-      tags: [Auth]
-      summary: Resend verification code
-      description: |
-        Resends the 6-digit verification code if expired or not received.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResendVerificationCodeRequest'
-      responses:
-        '200':
-          description: Verification code resent
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResendVerificationCodeResponse'
-        '400':
-          description: Invalid request or user already verified
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
   /auth/login:
     post:
       tags: [Auth]
@@ -767,59 +750,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
 
-  /auth/forgot-password:
-    post:
-      tags: [Auth]
-      summary: Request password reset
-      description: |
-        Sends a password reset link to the user's email if it exists.
-        For security, always returns success even if email doesn't exist.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ForgotPasswordRequest'
-      responses:
-        '200':
-          description: Password reset email sent (or email doesn't exist)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ForgotPasswordResponse'
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
-  /auth/reset-password:
-    post:
-      tags: [Auth]
-      summary: Reset password with token
-      description: |
-        Resets the user's password using the token from the reset email.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResetPasswordRequest'
-      responses:
-        '200':
-          description: Password reset successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResetPasswordResponse'
-        '400':
-          description: Invalid or expired token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
   /auth/me:
     get:
       tags: [Auth]
@@ -835,46 +765,6 @@ paths:
                 $ref: '#/components/schemas/UserSummary'
         '401':
           description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
-  #################################
-  # USER PUBLIC DATA
-  #################################
-  /users/{userId}/public:
-    get:
-      tags: [Users]
-      summary: Get user's public data
-      description: |
-        Retrieve public information about a user by their userId.
-        Returns name, email, WhatsApp number, and code number.
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          description: The UUID of the user
-      responses:
-        '200':
-          description: User public data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserPublicData'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '404':
-          description: User not found
           content:
             application/json:
               schema:
@@ -1002,32 +892,48 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 12
+                  example: 11
                 year:
                   type: integer
+                  example: 2025
                 name:
                   type: string
+                  description: "Unique portal key"
+                  example: "nov-2025-adv-physics"
                 displayName:
                   type: string
+                  description: "Name shown to students/admins in UI"
+                  example: "November 2025 - Advanced Physics"
                 isPublished:
                   type: boolean
                   default: false
+                  description: "Whether portal is visible to students"
               required:
                 - month
                 - year
                 - name
+                - displayName
       responses:
         '201':
           description: Portal created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentPortal'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PaymentPortal'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
         '403':
-          description: Forbidden (only MAIN_ADMIN)
+          $ref: '#/components/responses/ForbiddenError'
     patch:
       tags: [AdminPayments]
       summary: Bulk update portal visibility
-      description: Publish/unpublish portals (main admin).
+      description: Publish/unpublish multiple portals (main admin).
       security:
         - bearerAuth: []
       requestBody:
@@ -1042,16 +948,90 @@ paths:
                   items:
                     type: string
                     format: uuid
+                  example: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"]
                 isPublished:
                   type: boolean
+                  example: true
               required:
                 - portalIds
                 - isPublished
       responses:
         '200':
           description: Portals updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "Portals updated successfully"
+        '400':
+          $ref: '#/components/responses/BadRequestError'
         '403':
-          description: Forbidden
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/payment/portals/{portalId}:
+    patch:
+      tags: [AdminPayments]
+      summary: Update a single payment portal
+      description: |
+        Update portal details (displayName, isPublished, visibility).
+        Main admin only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: portalId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                  description: "Updated display name"
+                  example: "November 2025 - Advanced Physics (Updated)"
+                isPublished:
+                  type: boolean
+                  description: "Toggle publish status"
+                  example: true
+                visibility:
+                  type: string
+                  enum: [PUBLISHED, HIDDEN]
+                  description: "Explicit visibility state"
+                  example: "PUBLISHED"
+      responses:
+        '200':
+          description: Portal updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PaymentPortal'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   #################################
   # PAYMENT SUBMISSIONS (STUDENT)
@@ -1423,33 +1403,6 @@ paths:
                   total:
                     type: integer
 
-  /issues/ws-info:
-    get:
-      tags: [Issues]
-      summary: Get WebSocket connection information
-      description: |
-        Returns WebSocket connection details for real-time issue chat.
-        Includes WebSocket URL and authentication token.
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: WebSocket connection info
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  wsUrl:
-                    type: string
-                    description: "WebSocket server URL"
-                  token:
-                    type: string
-                    description: "Authentication token for WebSocket connection"
-                required:
-                  - wsUrl
-                  - token
-
   /issues/{issueId}:
     get:
       tags: [Issues]
@@ -1692,33 +1645,6 @@ paths:
                   total:
                     type: integer
 
-  /notifications/{notificationId}:
-    get:
-      tags: [Notifications]
-      summary: Get a single notification
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: notificationId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Notification details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Notification'
-        '404':
-          description: Notification not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
   /notifications/{notificationId}/read:
     patch:
       tags: [Notifications]
@@ -1739,71 +1665,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Notification'
-
-  #################################
-  # ADMIN - NOTIFICATIONS
-  #################################
-  /admin/notifications/broadcast:
-    post:
-      tags: [AdminUsers]
-      summary: Send broadcast notification
-      description: |
-        Send a notification to specific users via selected channels.
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                targetUserIds:
-                  type: array
-                  items:
-                    type: string
-                    format: uuid
-                  description: "Array of user IDs to send notification to"
-                channels:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/NotificationChannel'
-                  description: "Notification channels (IN_APP, EMAIL, WHATSAPP)"
-                title:
-                  type: string
-                body:
-                  type: string
-                metadata:
-                  type: object
-                  additionalProperties: true
-                  description: "Optional additional metadata"
-              required:
-                - targetUserIds
-                - channels
-                - title
-                - body
-      responses:
-        '202':
-          description: Notification broadcast accepted for delivery
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '403':
-          description: Forbidden (admin only)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
 
   #################################
   # GENERIC FILE UPLOAD (FOR ISSUES, ETC.)
@@ -1836,12 +1697,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/UploadedFile'
 
-  /files/upload-multiple:
+  #################################
+  # FOLDERS & VIDEOS
+  #################################
+  /folders:
+    get:
+      tags: [Folders]
+      summary: Get all folders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of all folders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Folder'
     post:
-      tags: [Students]
-      summary: Upload multiple files
-      description: |
-        Upload multiple files at once to File Storage Service.
+      tags: [Folders]
+      summary: Create a new folder
       security:
         - bearerAuth: []
       requestBody:
@@ -1851,96 +1727,80 @@ paths:
             schema:
               type: object
               properties:
-                files:
-                  type: array
-                  items:
-                    type: string
-                    format: binary
+                request:
+                  type: string
+                  description: JSON string of folder metadata
+                thumbnail:
+                  type: string
+                  format: binary
       responses:
         '201':
-          description: Files uploaded
+          description: Folder created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  files:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/UploadedFile'
+                $ref: '#/components/schemas/Folder'
 
-  /files/{fileId}/url:
+  /folders/user:
     get:
-      tags: [Students]
-      summary: Get signed URL for file download
-      description: |
-        Returns a pre-signed URL for downloading or viewing the file.
+      tags: [Folders]
+      summary: Get folders accessible by user
       security:
         - bearerAuth: []
       parameters:
-        - name: fileId
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of accessible folders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Folder'
+
+  /folders/{folderId}:
+    put:
+      tags: [Folders]
+      summary: Update a folder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderId
           in: path
           required: true
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
       responses:
         '200':
-          description: Signed file URL
+          description: Folder updated
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  url:
-                    type: string
-                  expiresIn:
-                    type: integer
-                    description: "URL expiration time in seconds"
-        '404':
-          description: File not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-
-  /files/{fileId}:
-    get:
-      tags: [Students]
-      summary: Get file metadata
-      description: |
-        Returns metadata about the file without downloading it.
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: fileId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: File metadata
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UploadedFile'
-        '404':
-          description: File not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
+                $ref: '#/components/schemas/Folder'
     delete:
-      tags: [Students]
-      summary: Delete a file
-      description: |
-        Deletes a file from the File Storage Service.
+      tags: [Folders]
+      summary: Delete a folder
       security:
         - bearerAuth: []
       parameters:
-        - name: fileId
+        - name: folderId
           in: path
           required: true
           schema:
@@ -1948,16 +1808,600 @@ paths:
             format: uuid
       responses:
         '204':
-          description: File deleted successfully
-        '404':
-          description: File not found
+          description: Folder deleted
+
+  /videos/{videoId}:
+    get:
+      tags: [Videos]
+      summary: Get video metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Video metadata
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '403':
-          description: Not authorized to delete this file
+                $ref: '#/components/schemas/VideoMetadata'
+    put:
+      tags: [Videos]
+      summary: Update video metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Video updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorObject'
+                $ref: '#/components/schemas/VideoMetadata'
+    delete:
+      tags: [Videos]
+      summary: Delete a video
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Video deleted
+
+  /videos/folder/{folderName}:
+    get:
+      tags: [Videos]
+      summary: Get videos by folder name
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VideoMetadata'
+
+  /videos/upload:
+    post:
+      tags: [Videos]
+      summary: Upload a video
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                thumbnail:
+                  type: string
+                  format: binary
+                request:
+                  type: string
+                  description: JSON string of video metadata
+      responses:
+        '201':
+          description: Video uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoMetadata'
+
+  /videos/{videoId}/access:
+    get:
+      tags: [Videos]
+      summary: Get video access (cookies/url)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userEmail
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access granted
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  #################################
+  # NOTES
+  #################################
+  /notes/folder/{folderName}:
+    get:
+      tags: [Notes]
+      summary: Get notes by folder name
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Note'
+
+  /notes/upload:
+    post:
+      tags: [Notes]
+      summary: Upload a note
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                folderId:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Note uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Note'
+
+  /notes/{noteId}:
+    put:
+      tags: [Notes]
+      summary: Update note metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: noteId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+      responses:
+        '200':
+          description: Note updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Note'
+    delete:
+      tags: [Notes]
+      summary: Delete a note
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: noteId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Note deleted
+
+  #################################
+  # CONTENT MANAGEMENT
+  #################################
+  
+  # Folder Management
+  /content/folders:
+    get:
+      tags: [Content]
+      summary: Get all folders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of all folders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+                
+    post:
+      tags: [Content]
+      summary: Create a new folder (Admin only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - name
+                - description
+                - year
+                - allowedEmails
+              properties:
+                name:
+                  type: string
+                  example: "Data Structures"
+                description:
+                  type: string
+                  example: "Course materials for Data Structures"
+                year:
+                  type: integer
+                  example: 2024
+                allowedEmails:
+                  type: array
+                  items:
+                    type: string
+                  example: ["student1@example.com", "student2@example.com"]
+                thumbnail:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/folders/user:
+    get:
+      tags: [Content]
+      summary: Get folders accessible by current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of accessible folders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/folders/{folderId}:
+    put:
+      tags: [Content]
+      summary: Update a folder (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                year:
+                  type: integer
+                allowedEmails:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Folder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+                
+    delete:
+      tags: [Content]
+      summary: Delete a folder (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Folder deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  # Video Management
+  /content/videos/upload:
+    post:
+      tags: [Content]
+      summary: Upload a video (Admin only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - folderId
+                - video
+              properties:
+                folderId:
+                  type: string
+                  example: "folder-123"
+                description:
+                  type: string
+                  example: "Introduction to Data Structures"
+                video:
+                  type: string
+                  format: binary
+                thumbnail:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Video uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/videos/{videoId}:
+    get:
+      tags: [Content]
+      summary: Get video metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+                
+    delete:
+      tags: [Content]
+      summary: Delete a video (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/videos/folder/{folderName}:
+    get:
+      tags: [Content]
+      summary: Get videos by folder name
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/videos/{videoId}/access:
+    get:
+      tags: [Content]
+      summary: Get video access credentials for secure playback
+      description: Returns CloudFront signed cookies for HLS streaming
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video access credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/videos/{videoId}/status:
+    post:
+      tags: [Content]
+      summary: Update video processing status (Internal)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [UPLOADING, PROCESSING, READY, FAILED]
+                outputKey:
+                  type: string
+                encryptionKeyS3Path:
+                  type: string
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  # Note (PDF) Management
+  /content/notes/upload:
+    post:
+      tags: [Content]
+      summary: Upload a PDF note (Admin only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - folderId
+                - file
+              properties:
+                folderId:
+                  type: string
+                  example: "folder-123"
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Note uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/notes/folder/{folderName}:
+    get:
+      tags: [Content]
+      summary: Get notes by folder name
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: folderName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of notes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+
+  /content/notes/{noteId}:
+    delete:
+      tags: [Content]
+      summary: Delete a note (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: noteId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Note deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
