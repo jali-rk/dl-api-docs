@@ -134,11 +134,14 @@ components:
           maximum: 12
         year:
           type: integer
+          minimum: 2000
         name:
           type: string
+          maxLength: 100
           description: "Unique portal key (e.g., 'nov-2025-adv-physics')."
         displayName:
           type: string
+          maxLength: 200
         isPublished:
           type: boolean
           default: false
@@ -164,6 +167,7 @@ components:
       properties:
         portalIds:
           type: array
+          minItems: 1
           items:
             type: string
             format: uuid
@@ -241,9 +245,11 @@ components:
           format: uuid
         portalNameConfirmation:
           type: string
+          minLength: 1
           description: "Portal name re-entered by student."
         files:
           type: array
+          minItems: 1
           items:
             $ref: '#/components/schemas/UploadedFileRef'
       required:
@@ -272,6 +278,7 @@ components:
             $ref: '#/components/schemas/PaymentSubmission'
         total:
           type: integer
+          format: int64
       required:
         - items
         - total
@@ -288,6 +295,8 @@ paths:
         Used by BFF:
           - `/payment/portals` for student/admin portal listing.
           - BFF applies role logic (students see only published portals).
+        
+        Default limit: 20
       security:
         - serviceAuth: []
       parameters:
@@ -322,6 +331,7 @@ paths:
                       $ref: '#/components/schemas/PaymentPortal'
                   total:
                     type: integer
+                    format: int64
         '401':
           description: Unauthorized
           content:
@@ -335,8 +345,17 @@ paths:
         Used by BFF `/admin/payment/portals` (POST).
 
         BFF ensures only MAIN_ADMIN can create portals, according to BRD. :contentReference[oaicite:1]{index=1}
+        
+        Note: Requires Authorization header with JWT token to extract adminId.
       security:
         - serviceAuth: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+          description: "Bearer token containing user ID for audit trail"
       requestBody:
         required: true
         content:
@@ -504,6 +523,8 @@ paths:
           - `/payment/submissions/me`  → filter by `studentId`
           - `/admin/payment/submissions` → filter by `status`, `portalId`, etc.
             (BFF may join with User Service for email/name/WhatsApp searches). :contentReference[oaicite:4]{index=4}
+        
+        Default limit: 10
       security:
         - serviceAuth: []
       parameters:

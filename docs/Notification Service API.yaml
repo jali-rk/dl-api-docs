@@ -12,8 +12,26 @@ info:
       - Consume domain events (payment status changes, issues, registration, etc.)
         and fan them out to appropriate channels (IN_APP, EMAIL, WHATSAPP).
 
+    ## BFF Integration & Field Mapping
+
+    This service communicates with the BFF layer, which transforms the API for frontend consumption:
+
+    **Field Mapping (Service → BFF):**
+    - `channel` → `type` (to match frontend expectations)
+    - `deliveryStatus`, `readAt`, `templateKey` → filtered out (internal only)
+
+    **Endpoint Mapping:**
+    - Service: GET /notifications?userId={id} → BFF: GET /notifications (userId from Bearer token)
+    - Service: POST /notifications/send → BFF: POST /admin/notifications/broadcast
+
+    **Authentication:**
+    - Service-to-Service: X-Service-Token
+    - Frontend-to-BFF: Bearer token (JWT)
+
+    See individual endpoint descriptions for detailed BFF transformation notes.
+
 servers:
-  - url: https://notification-service.internal/api/v1
+  - url: https://notification-service.internal
 
 tags:
   - name: Notifications
@@ -22,6 +40,10 @@ tags:
     description: Domain event ingestion (payment status, issues, etc.)
   - name: DirectSend
     description: Direct ad-hoc sends (admin broadcast, system messages)
+  - name: Templates
+    description: Notification template management (NEW - implements frontend template CRUD)
+  - name: Broadcasts
+    description: Broadcast notification tracking and history (NEW - implements admin sent notifications view)
 
 security:
   - serviceAuth: []
@@ -77,6 +99,7 @@ components:
       description: |
         Internal notification record.
         For IN_APP notifications, this is what BFF shows in `/notifications`.
+        Note: BFF exposes this with 'type' instead of 'channel' to match frontend expectations.
       properties:
         id:
           type: string
@@ -86,6 +109,7 @@ components:
           format: uuid
         channel:
           $ref: '#/components/schemas/NotificationChannel'
+          description: "Internal field name. BFF maps this to 'type' for frontend compatibility."
         title:
           type: string
         body:
@@ -102,6 +126,7 @@ components:
           nullable: true
         deliveryStatus:
           $ref: '#/components/schemas/DeliveryStatus'
+          description: "Internal status. BFF may filter out FAILED notifications from user views."
         templateKey:
           type: string
           nullable: true
@@ -119,6 +144,43 @@ components:
         - isRead
         - createdAt
         - deliveryStatus
+
+    # BFF Response Schema (for reference)
+    NotificationBFFResponse:
+      type: object
+      description: |
+        How BFF transforms Notification for frontend consumption.
+        Maps 'channel' → 'type' for consistency with frontend expectations.
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/NotificationChannel'
+          description: "Mapped from 'channel' field in internal schema."
+        title:
+          type: string
+        body:
+          type: string
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - id
+        - userId
+        - type
+        - title
+        - body
+        - isRead
+        - createdAt
 
     NotificationListResponse:
       type: object
@@ -175,7 +237,7 @@ components:
           description: |
             Preferred channels for this event (defaults handled server-side).
             For example, PAYMENT_STATUS_CHANGED will always send at least EMAIL
-            to satisfy BRD; IN_APP can be added here as well. :contentReference[oaicite:2]{index=2}
+            to satisfy BRD; IN_APP can be added here as well.
           items:
             $ref: '#/components/schemas/NotificationChannel'
         payload:
@@ -195,6 +257,194 @@ components:
         - eventType
         - primaryUserId
 
+    # === NOTIFICATION TEMPLATES ===
+    NotificationTemplate:
+      type: object
+      description: |
+        Reusable notification template for admin-created notifications.
+        Supports both general broadcasts and personalized notifications.
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          description: "Display identifier (e.g., 'Notification 1', 'Template A')"
+        templateName:
+          type: string
+          description: "Human-readable template name (e.g., 'October Payment Approval')"
+        type:
+          type: string
+          enum: [GENERAL, PERSONALIZED]
+          description: |
+            - GENERAL: Same message for all recipients
+            - PERSONALIZED: Supports placeholders like {{month}}, {{studentName}}
+        contentSinhala:
+          type: string
+          nullable: true
+          description: "Sinhala version of notification content"
+        contentEnglish:
+          type: string
+          nullable: true
+          description: "English version of notification content"
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+          description: "Default channels for this template"
+        metadata:
+          type: object
+          additionalProperties: true
+          description: "Template variables and configuration"
+        sentTimes:
+          type: integer
+          description: "Number of times this template has been used"
+          default: 0
+        createdBy:
+          type: string
+          format: uuid
+          description: "Admin user who created the template"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - templateId
+        - templateName
+        - type
+        - createdAt
+        - updatedAt
+
+    TemplateListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationTemplate'
+        total:
+          type: integer
+      required:
+        - items
+        - total
+
+    CreateTemplateRequest:
+      type: object
+      properties:
+        templateId:
+          type: string
+        templateName:
+          type: string
+        type:
+          type: string
+          enum: [GENERAL, PERSONALIZED]
+        contentSinhala:
+          type: string
+          nullable: true
+        contentEnglish:
+          type: string
+          nullable: true
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - templateId
+        - templateName
+        - type
+
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        templateName:
+          type: string
+        type:
+          type: string
+          enum: [GENERAL, PERSONALIZED]
+        contentSinhala:
+          type: string
+          nullable: true
+        contentEnglish:
+          type: string
+          nullable: true
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        metadata:
+          type: object
+          additionalProperties: true
+
+    # === BROADCAST TRACKING ===
+    BroadcastRecord:
+      type: object
+      description: |
+        Tracks a broadcast notification send operation.
+        Links to individual notification records created for each recipient.
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Template used for this broadcast (if any)"
+        title:
+          type: string
+        body:
+          type: string
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        recipientCount:
+          type: integer
+          description: "Total number of target users"
+        successCount:
+          type: integer
+          description: "Number of successfully delivered notifications"
+        failureCount:
+          type: integer
+          description: "Number of failed deliveries"
+        sentBy:
+          type: string
+          format: uuid
+          description: "Admin user who sent the broadcast"
+        sentAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - id
+        - title
+        - body
+        - channels
+        - recipientCount
+        - sentBy
+        - sentAt
+
+    BroadcastListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BroadcastRecord'
+        total:
+          type: integer
+      required:
+        - items
+        - total
+
     DirectNotificationSendRequest:
       type: object
       description: |
@@ -206,8 +456,10 @@ components:
           items:
             type: string
             format: uuid
-        channel:
-          $ref: '#/components/schemas/NotificationChannel'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
         title:
           type: string
         body:
@@ -217,7 +469,7 @@ components:
           additionalProperties: true
       required:
         - targetUserIds
-        - channel
+        - channels
         - title
         - body
 
@@ -232,9 +484,17 @@ paths:
       description: |
         Used by BFF `/notifications` to show in-app notifications in MFEs.
 
-        BFF:
-          - Passes current userId in query.
-          - Typically filters on IN_APP channel, but this endpoint can return all.
+        **Service-to-Service (BFF → Notification Service):**
+          - BFF passes userId in query parameter
+          - Uses X-Service-Token for authentication
+          - Can filter by channel (e.g., IN_APP only)
+
+        **BFF Public API (Frontend → BFF):**
+          - BFF exposes GET /notifications without userId param
+          - Uses Bearer token to identify authenticated user
+          - Returns 'type' instead of 'channel' in response
+          - Filters out internal fields (deliveryStatus, readAt, templateKey)
+          - Only shows successfully delivered notifications
       security:
         - serviceAuth: []
       parameters:
@@ -244,6 +504,7 @@ paths:
           schema:
             type: string
             format: uuid
+          description: "User ID to fetch notifications for. BFF extracts this from Bearer token."
         - name: unreadOnly
           in: query
           required: false
@@ -255,7 +516,7 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/NotificationChannel'
-          description: "Optional filter (e.g., IN_APP only)."
+          description: "Optional filter (e.g., IN_APP only). BFF typically filters for IN_APP."
         - $ref: '#/components/parameters/PaginationLimit'
         - $ref: '#/components/parameters/PaginationOffset'
       responses:
@@ -416,12 +677,29 @@ paths:
         Used by BFF when admins explicitly "send notifications" to students
         (e.g., announcements, reminders).
 
-        Now supports MULTIPLE channels per request, similar to notification events.
+        **Service-to-Service (BFF → Notification Service):**
+          - Endpoint: POST /notifications/send
+          - Uses X-Service-Token for authentication
+
+        **BFF Public API (Frontend → BFF):**
+          - Endpoint: POST /admin/notifications/broadcast
+          - Uses Bearer token (admin only)
+          - BFF proxies request to this endpoint
+
+        Supports MULTIPLE channels per request, similar to notification events.
 
         Example:
           channels: [IN_APP, EMAIL]
       security:
         - serviceAuth: []
+      parameters:
+        - name: X-User-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: "Optional sender user ID; defaults to system user when omitted."
       requestBody:
         required: true
         content:
@@ -458,8 +736,368 @@ paths:
       responses:
         '202':
           description: Send request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  broadcastId:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # NOTIFICATION TEMPLATES (NEW)
+  #################################
+  /templates:
+    get:
+      tags: [Templates]
+      summary: List notification templates
+      description: |
+        Retrieve paginated list of notification templates.
+        Used by BFF to populate template selector in admin UI.
+
+        **BFF Mapping:**
+        - Service: GET /templates
+        - BFF: GET /admin/notification-templates
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [GENERAL, PERSONALIZED]
+          description: "Filter by template type"
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Search in templateName and templateId"
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateListResponse'
+
+    post:
+      tags: [Templates]
+      summary: Create notification template
+      description: |
+        Create a new reusable notification template.
+        Used by BFF when admin creates template via UI.
+
+        **BFF Mapping:**
+        - Service: POST /templates
+        - BFF: POST /admin/notification-templates
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: X-User-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: "Optional creator user ID; defaults to system user when omitted."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTemplate'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  /templates/{templateId}:
+    get:
+      tags: [Templates]
+      summary: Get template details
+      description: |
+        **BFF Mapping:**
+        - Service: GET /templates/{templateId}
+        - BFF: GET /admin/notification-templates/{templateId}
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTemplate'
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+    put:
+      tags: [Templates]
+      summary: Update notification template
+      description: |
+        **BFF Mapping:**
+        - Service: PUT /templates/{templateId}
+        - BFF: PUT /admin/notification-templates/{templateId}
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTemplate'
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+    delete:
+      tags: [Templates]
+      summary: Delete notification template
+      description: |
+        **BFF Mapping:**
+        - Service: DELETE /templates/{templateId}
+        - BFF: DELETE /admin/notification-templates/{templateId}
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Template deleted
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: Template in use, cannot delete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # BROADCAST TRACKING (NEW)
+  #################################
+  /broadcasts:
+    get:
+      tags: [Broadcasts]
+      summary: List broadcast notification history
+      description: |
+        Retrieve history of admin-initiated broadcast notifications.
+        Shows metadata about each broadcast send operation.
+
+        Used by BFF to populate admin notifications page showing "sent" notifications.
+
+        **BFF Mapping:**
+        - Service: GET /broadcasts
+        - BFF: GET /admin/notifications (returns sent broadcasts)
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: sentBy
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: "Filter by admin user who sent"
+        - name: dateFrom
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: "Filter broadcasts sent after this date"
+        - name: dateTo
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: "Filter broadcasts sent before this date"
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Search in title and body"
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+      responses:
+        '200':
+          description: List of broadcast records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BroadcastListResponse'
+
+  /broadcasts/{broadcastId}:
+    get:
+      tags: [Broadcasts]
+      summary: Get broadcast details
+      description: |
+        Retrieve details of a specific broadcast including delivery statistics.
+
+        **BFF Mapping:**
+        - Service: GET /broadcasts/{broadcastId}
+        - BFF: GET /admin/notifications/{broadcastId}
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: broadcastId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Broadcast details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BroadcastRecord'
+        '404':
+          description: Broadcast not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+
+  #################################
+  # TEMPLATE-BASED SEND (NEW)
+  #################################
+  /notifications/send-from-template:
+    post:
+      tags: [DirectSend, Templates]
+      summary: Send notification using template
+      description: |
+        Send ad-hoc notification using a predefined template.
+        Template placeholders (e.g., {{month}}, {{studentName}}) are replaced
+        with values from placeholderData.
+
+        This is an alternative to /notifications/send that uses templates.
+
+        **BFF Mapping:**
+        - Service: POST /notifications/send-from-template
+        - BFF: POST /admin/send-notification (with templateId)
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: X-User-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: "Optional sender user ID; defaults to system user when omitted."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                templateId:
+                  type: string
+                  format: uuid
+                targetUserIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                placeholderData:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Key-value pairs to replace template placeholders.
+                    Example: { "month": "December", "studentName": "John" }
+                channels:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/NotificationChannel'
+                  description: "Override template's default channels (optional)"
+              required:
+                - templateId
+                - targetUserIds
+      responses:
+        '202':
+          description: Template-based send accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  broadcastId:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '400':
+          description: Missing required placeholder data
           content:
             application/json:
               schema:
