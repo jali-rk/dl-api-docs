@@ -473,6 +473,36 @@ components:
         - title
         - body
 
+    DirectNotificationSendByEmailRequest:
+      type: object
+      description: |
+        For ad-hoc email notifications using email addresses directly instead of user IDs.
+        Useful for sending notifications to recipients who may not have user accounts.
+      properties:
+        targetEmails:
+          type: array
+          items:
+            type: string
+            format: email
+          description: "Email addresses of recipients"
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+          description: "Only EMAIL channel is supported (IN_APP and WHATSAPP require user IDs)"
+        title:
+          type: string
+        body:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - targetEmails
+        - channels
+        - title
+        - body
+
 paths:
   #################################
   # NOTIFICATIONS (QUERY FOR BFF)
@@ -752,6 +782,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
+
+  /notifications/send-by-email:
+    post:
+      tags: [DirectSend]
+      summary: Directly send ad-hoc notifications by email addresses
+      description: |
+        Send notifications directly to email addresses without requiring user IDs.
+        
+        **Use Cases:**
+          - Send notifications to recipients who don't have user accounts
+          - External communications where user lookup is not needed
+          - Simplified email broadcasts
+        
+        **Limitations:**
+          - Only EMAIL channel is supported (IN_APP and WHATSAPP require user IDs)
+          - No notification records are stored in the database (user_id constraint)
+          - Emails are sent immediately (not through outbox worker)
+          - Broadcast tracking is still maintained for statistics
+        
+        **Service-to-Service (BFF → Notification Service):**
+          - Endpoint: POST /notifications/send-by-email
+          - Uses X-Service-Token for authentication
+        
+        **BFF Public API (Frontend → BFF):**
+          - Endpoint: POST /admin/notifications/send-by-email
+          - Uses Bearer token (admin only)
+          - BFF proxies request to this endpoint
+      security:
+        - serviceAuth: []
+      parameters:
+        - name: X-User-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: "Optional sender user ID; defaults to system user when omitted."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectNotificationSendByEmailRequest'
+      responses:
+        '202':
+          description: Send by email request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  broadcastId:
+                    type: string
+                    format: uuid
+                    description: "Broadcast tracking ID"
+                  message:
+                    type: string
+                    example: "Send by email request accepted"
+        '400':
+          description: Validation error (e.g., unsupported channel)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+              example:
+                code: "400"
+                message: "Only EMAIL channel is supported when sending by email addresses. For IN_APP or WHATSAPP channels, use the /send endpoint with user IDs."
 
   #################################
   # NOTIFICATION TEMPLATES (NEW)
