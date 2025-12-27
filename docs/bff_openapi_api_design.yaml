@@ -169,6 +169,54 @@ components:
               nullable: true
               description: "Explanation if profile editing is locked"
 
+    StudentListItem:
+      type: object
+      description: Student list item returned by User Service paginated students endpoint.
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        whatsappNumber:
+          type: string
+        codeNumber:
+          type: string
+          description: "6-digit unique code assigned to student"
+        role:
+          type: string
+          example: STUDENT
+        isVerified:
+          type: boolean
+        registrationNumber:
+          type: integer
+          description: Numeric part of code number
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        nic:
+          type: string
+          description: National Identity Card number (NIC)
+        school:
+          type: string
+          nullable: true
+        address:
+          type: string
+      required:
+        - id
+        - fullName
+        - email
+        - whatsappNumber
+        - role
+        - isVerified
+        - nic
+        - address
+
     RegistrationRequest:
       type: object
       properties:
@@ -1185,6 +1233,79 @@ paths:
         '403':
           description: Portal not accessible
 
+  /payment/portals/{portalId}/submissions/by-file-ids:
+    post:
+      tags: [PaymentSubmissions]
+      summary: Submit payment using file IDs
+      description: |
+        Same as submitting payment with file upload, but skips uploading.
+        Preferred: frontend provides already-uploaded file references (`files`) including `fileId`, `fileName`, and `fileType`.
+        Backward compatibility: `fileIds` is also accepted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: portalId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                portalNameConfirmation:
+                  type: string
+                  description: "Student must re-enter the portal name"
+                files:
+                  type: array
+                  description: "Preferred: already-uploaded file refs (no upload performed)"
+                  items:
+                    type: object
+                    properties:
+                      fileId:
+                        type: string
+                        format: uuid
+                        description: "Previously uploaded file ID"
+                      fileName:
+                        type: string
+                        description: "Original file name"
+                      fileType:
+                        type: string
+                        description: "MIME type"
+                        example: "application/pdf"
+                    required:
+                      - fileId
+                      - fileName
+                      - fileType
+                fileIds:
+                  type: array
+                  description: "Backward compatibility: file IDs only"
+                  items:
+                    type: string
+                    format: uuid
+              required:
+                - portalNameConfirmation
+              anyOf:
+                - required:
+                    - files
+                - required:
+                    - fileIds
+      responses:
+        '201':
+          description: Submission created (initial status PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSubmission'
+        '400':
+          description: Invalid request
+        '403':
+          description: Portal not accessible
+
   /payment/submissions/me:
     get:
       tags: [PaymentSubmissions]
@@ -1390,6 +1511,44 @@ paths:
   #################################
   # ADMIN - STUDENT SEARCH & MANAGEMENT
   #################################
+  /admin/students:
+    get:
+      tags: [AdminUsers]
+      summary: Get all students (paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Students page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                success: true
+                data:
+                  items: []
+                  total: 0
+                  page: 1
+                  pageSize: 50
+                  totalPages: 0
+
   /admin/students/search:
     get:
       tags: [AdminUsers]
@@ -1426,7 +1585,7 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/StudentProfile'
+                      $ref: '#/components/schemas/StudentListItem'
                   total:
                     type: integer
 
@@ -1914,10 +2073,9 @@ paths:
                   description: Optional metadata for the notification
                   example:
                     priority: "high"
-                    category: "system"
       responses:
         '202':
-          description: Broadcast notification request accepted for processing
+          description: Broadcast notification request accepted
           content:
             application/json:
               schema:
@@ -1940,6 +2098,71 @@ paths:
                         items:
                           type: string
                         example: ["IN_APP", "EMAIL"]
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /admin/notifications/broadcast/by-email:
+    post:
+      tags: [Admin, Notifications]
+      summary: Send broadcast EMAIL notification to email addresses
+      description: |
+        Admin endpoint to send EMAIL notifications to explicit email addresses.
+
+        IMPORTANT: Only the `EMAIL` channel is supported for this endpoint.
+        For `IN_APP` or `WHATSAPP`, use `/admin/notifications/broadcast` with user IDs.
+
+        Maps to notification service POST /notifications/send-by-email
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - targetEmails
+                - channels
+                - title
+                - body
+              properties:
+                targetEmails:
+                  type: array
+                  items:
+                    type: string
+                    format: email
+                  description: List of email addresses to send notification to
+                  example: ["user@example.com"]
+                channels:
+                  type: array
+                  items:
+                    type: string
+                    enum: [EMAIL]
+                  description: Must be ["EMAIL"]
+                  example: ["EMAIL"]
+                title:
+                  type: string
+                  example: "System Maintenance Notice"
+                body:
+                  type: string
+                  example: "We will be under maintenance tonight."
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '202':
+          description: Send-by-email request accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                success: true
+                data:
+                  broadcastId: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  message: "Send by email request accepted"
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':
